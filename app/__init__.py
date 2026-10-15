@@ -6,13 +6,14 @@ from .routes.auth import auth_bp
 from flask_jwt_extended import JWTManager
 from .routes.category import category_bp
 from .routes.product import product_bp
-
+from .routes.inventory import inventory_bp
+from datetime import timedelta
 load_dotenv()
 
 def create_app():
     app = Flask(__name__)
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")
-
+    app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)
     jwt = JWTManager(app)
 
     app.config["SQLALCHEMY_DATABASE_URI"] = (
@@ -36,4 +37,5 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(category_bp)
     app.register_blueprint(product_bp)
+    app.register_blueprint(inventory_bp)
     return app

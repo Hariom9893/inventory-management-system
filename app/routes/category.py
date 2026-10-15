@@ -1,10 +1,11 @@
 from flask import Blueprint, request,jsonify
 from ..extensions import db
 from ..models import Category,Product
-
+from flask_jwt_extended import jwt_required
 category_bp = Blueprint("category",__name__)
 
 @category_bp.route("/categories",methods=["POST"])
+@jwt_required()
 def create_category():
     data = request.get_json()
     name = data.get("name")
@@ -63,6 +64,7 @@ def get_categories_id(id):
     return jsonify(result),200
 
 @category_bp.route("/categories/<int:id>", methods=["PUT"])
+@jwt_required()
 def update_categories(id):
 
     data = request.get_json(silent=True)
@@ -97,7 +99,7 @@ def update_categories(id):
     }, 200
 
 @category_bp.route("/categories/<int:id>",methods=["DELETE"])
-
+@jwt_required()
 def delete_category(id):
 
     category = Category.query.filter_by(id=id).first()
