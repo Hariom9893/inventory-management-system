@@ -8,6 +8,7 @@ from .routes.category import category_bp
 from .routes.product import product_bp
 from .routes.inventory import inventory_bp
 from datetime import timedelta
+from app.routes.dashboard import dashboard_bp
 load_dotenv()
 
 def create_app():
@@ -38,4 +39,5 @@ def create_app():
     app.register_blueprint(category_bp)
     app.register_blueprint(product_bp)
     app.register_blueprint(inventory_bp)
+    app.register_blueprint(dashboard_bp)
     return app

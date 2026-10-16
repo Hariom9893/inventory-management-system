@@ -30,7 +30,7 @@ class User(db.Model):
     role = db.Column(
         db.String(20),
         nullable=False,
-        default="admin"
+        default="user"
     )
 
     created_at = db.Column(

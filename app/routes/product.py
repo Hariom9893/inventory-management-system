@@ -2,12 +2,12 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from ..extensions import db
 from ..models import Product, Category, InventoryTransaction
-
+from .auth import admin_required
 product_bp = Blueprint("product", __name__)
 
 
 @product_bp.route("/products", methods=["POST"])
-@jwt_required()
+@admin_required()
 def create_product():
 
     data = request.get_json(silent=True)
@@ -220,7 +220,7 @@ def get_product_by_id(id):
     return jsonify(result), 200
 
 @product_bp.route("/products/<int:id>", methods=["PUT"])
-@jwt_required()
+@admin_required()
 def update_product(id):
 
     data = request.get_json(silent=True)
@@ -320,13 +320,22 @@ def update_product(id):
 
 
 @product_bp.route("/products/<int:id>", methods=["DELETE"])
-@jwt_required()
+@admin_required()
 def delete_product(id):
 
     product = db.session.get(Product, id)
 
     if not product:
         return {"error": "Product not found"}, 404
+
+    existing_transactions = InventoryTransaction.query.filter_by(
+    product_id=id
+    ).first()
+
+    if existing_transactions:
+        return {
+            "error": "Cannot delete product because inventory transaction history exists"
+        }, 409
 
     db.session.delete(product)
     db.session.commit()
@@ -335,16 +344,14 @@ def delete_product(id):
 
 
 @product_bp.route("/products/<int:id>/stock-in", methods=["POST"])
-@jwt_required()
+@admin_required()
 def stock_in(id):
 
-    # 1. Request body validate karo
     data = request.get_json(silent=True)
 
     if not data:
         return {"error": "Request body is required"}, 400
 
-    # 2. Quantity validate karo
     quantity = data.get("quantity")
 
     if (
@@ -354,50 +361,57 @@ def stock_in(id):
     ):
         return {"error": "Quantity must be a positive integer"}, 400
 
-    # 3. Product exist karta hai ya nahi
-    product = db.session.get(Product, id)
-
-    if not product:
-        return {"error": "Product not found"}, 404
-
-    # 4. JWT se logged-in admin ki ID lo
     user_id = int(get_jwt_identity())
 
     try:
-        # 5. Stock update karo
-        product.current_stock += quantity
+        # Atomic stock increment
+        result = (
+            db.session.query(Product)
+            .filter(Product.id == id)
+            .update(
+                {
+                    Product.current_stock:
+                        Product.current_stock + quantity
+                },
+                synchronize_session=False
+            )
+        )
 
-        # 6. Inventory history record banao
+        if result == 0:
+            db.session.rollback()
+            return {"error": "Product not found"}, 404
+
         transaction = InventoryTransaction(
-            product_id=product.id,
+            product_id=id,
             user_id=user_id,
             type="IN",
             quantity=quantity
         )
 
         db.session.add(transaction)
+        db.session.flush()
 
-        # 7. Dono changes ek saath save karo
+        product = db.session.get(Product, id)
+        current_stock = product.current_stock
+
         db.session.commit()
 
     except Exception:
-        # Failure par dono changes rollback honge
         db.session.rollback()
         return {"error": "Stock-in operation failed"}, 500
 
-    # 8. Success response
     return {
         "message": "Stock added successfully",
-        "product_id": product.id,
+        "product_id": id,
         "quantity_added": quantity,
-        "current_stock": product.current_stock
+        "current_stock": current_stock
     }, 200
 
 
 
 
 @product_bp.route("/products/<int:id>/stock-out", methods=["POST"])
-@jwt_required()
+@admin_required()
 def stock_out(id):
 
     data = request.get_json(silent=True)

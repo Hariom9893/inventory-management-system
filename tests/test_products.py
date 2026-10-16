@@ -546,3 +546,182 @@ def test_filter_low_stock_products():
         product["current_stock"] <= product["low_stock_threshold"]
         for product in data["products"]
     )
+
+
+def test_dashboard_requires_token():
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 401
+
+
+def test_dashboard_returns_summary():
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+
+    assert login_response.status_code == 200
+
+    token = login_response.get_json()["access_token"]
+
+    response = client.get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 200
+
+    data = response.get_json()
+
+    assert "total_products" in data
+    assert "total_categories" in data
+    assert "low_stock_count" in data
+    assert "inventory_value" in data
+
+
+def test_dashboard_returns_valid_counts():
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+
+    token = login_response.get_json()["access_token"]
+
+    response = client.get(
+        "/dashboard",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    data = response.get_json()
+
+    assert data["total_products"] >= 0
+    assert data["total_categories"] >= 0
+    assert data["low_stock_count"] >= 0
+    assert data["inventory_value"] >= 0
+
+def test_normal_user_cannot_create_product():
+    import uuid
+
+    app = create_app()
+    client = app.test_client()
+
+    email = f"user_{uuid.uuid4().hex[:8]}@example.com"
+
+    register_response = client.post("/register", json={
+        "name": "Test User",
+        "email": email,
+        "password": "testpass123"
+    })
+
+    assert register_response.status_code == 201
+
+    login_response = client.post("/login", json={
+        "email": email,
+        "password": "testpass123"
+    })
+
+    token = login_response.get_json()["access_token"]
+
+    response = client.post(
+        "/products",
+        json={"name": "Test Product", "sku": f"TEST-{uuid.uuid4().hex[:8]}", "price": 100},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 403
+
+def test_cannot_delete_product_with_transaction_history():
+    import uuid
+
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+    token = login_response.get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    product_response = client.post(
+        "/products",
+        json={
+            "name": "History Test Product",
+            "sku": f"HIST-{uuid.uuid4().hex[:8]}",
+            "price": 100
+        },
+        headers=headers
+    )
+    product_id = product_response.get_json()["product"]["id"]
+
+    stock_response = client.post(
+        f"/products/{product_id}/stock-in",
+        json={"quantity": 5},
+        headers=headers
+    )
+    assert stock_response.status_code == 200
+
+    delete_response = client.delete(
+        f"/products/{product_id}",
+        headers=headers
+    )
+
+    assert delete_response.status_code == 409
+    assert "transaction history exists" in delete_response.get_json()["error"]
+
+def test_inventory_transactions_requires_token():
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/inventory/transactions")
+
+    assert response.status_code == 401
+
+
+def test_inventory_transactions_rejects_invalid_product_id():
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+
+    token = login_response.get_json()["access_token"]
+
+    response = client.get(
+        "/inventory/transactions?product_id=abc",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Product ID must be an integer"
+
+
+def test_inventory_transactions_rejects_invalid_type():
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+
+    token = login_response.get_json()["access_token"]
+
+    response = client.get(
+        "/inventory/transactions?type=INVALID",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Type must be IN or OUT"
