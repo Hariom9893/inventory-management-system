@@ -1,7 +1,7 @@
 from flask import Flask
 from dotenv import load_dotenv
 import os
-from .extensions import db
+from .extensions import db, migrate
 from .routes.auth import auth_bp
 from flask_jwt_extended import JWTManager
 from .routes.category import category_bp
@@ -25,11 +25,9 @@ def create_app():
     )
 
     db.init_app(app)
-
+    migrate.init_app(app, db)
     from .models import Category,Product,User,InventoryTransaction
 
-    with app.app_context():
-        db.create_all()
 
     @app.route("/home")
     def home():
