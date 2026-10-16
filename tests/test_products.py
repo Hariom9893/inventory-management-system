@@ -725,3 +725,135 @@ def test_inventory_transactions_rejects_invalid_type():
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "Type must be IN or OUT"
+
+def test_create_category_requires_admin():
+    import uuid
+
+    app = create_app()
+    client = app.test_client()
+
+    email = f"user_{uuid.uuid4().hex[:8]}@example.com"
+
+    client.post("/register", json={
+        "name": "Test User",
+        "email": email,
+        "password": "testpass123"
+    })
+
+    login_response = client.post("/login", json={
+        "email": email,
+        "password": "testpass123"
+    })
+
+    token = login_response.get_json()["access_token"]
+
+    response = client.post(
+        "/categories",
+        json={"name": f"Test-{uuid.uuid4().hex[:8]}"},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 403
+
+
+def test_create_category_rejects_empty_name():
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+
+    token = login_response.get_json()["access_token"]
+
+    response = client.post(
+        "/categories",
+        json={"name": "   "},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 400
+
+
+def test_create_category_rejects_duplicate_name():
+    import uuid
+
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+
+    token = login_response.get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    name = f"Duplicate-{uuid.uuid4().hex[:8]}"
+
+    first = client.post(
+        "/categories",
+        json={"name": name},
+        headers=headers
+    )
+
+    second = client.post(
+        "/categories",
+        json={"name": name},
+        headers=headers
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+
+
+def test_cannot_delete_category_with_products():
+    import uuid
+
+    app = create_app()
+    client = app.test_client()
+
+    login_response = client.post("/login", json={
+        "email": "admin@gmail.com",
+        "password": "admin123"
+    })
+
+    token = login_response.get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    category_name = f"Linked-{uuid.uuid4().hex[:8]}"
+
+    category_response = client.post(
+        "/categories",
+        json={"name": category_name},
+        headers=headers
+    )
+
+    assert category_response.status_code == 201
+
+    # Fetch category ID by its unique name
+    categories_response = client.get("/categories")
+    category = next(
+        item for item in categories_response.get_json()
+        if item["name"] == category_name
+    )
+
+    product_response = client.post(
+        "/products",
+        json={
+            "name": "Linked Product",
+            "sku": f"LINK-{uuid.uuid4().hex[:8]}",
+            "price": 100,
+            "category_id": category["id"]
+        },
+        headers=headers
+    )
+
+    assert product_response.status_code == 201
+
+    delete_response = client.delete(
+        f"/categories/{category['id']}",
+        headers=headers
+    )
+
+    assert delete_response.status_code == 409

@@ -1,118 +1,143 @@
-from flask import Blueprint, request,jsonify
-from ..extensions import db
-from ..models import Category,Product
+from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
-category_bp = Blueprint("category",__name__)
 
-@category_bp.route("/categories",methods=["POST"])
-@jwt_required()
+from ..extensions import db
+from ..models import Category, Product
+from .auth import admin_required
+
+category_bp = Blueprint("category", __name__)
+
+
+@category_bp.route("/categories", methods=["POST"])
+@admin_required()
 def create_category():
-    data = request.get_json()
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return {"error": "Valid JSON request body is required"}, 400
+
     name = data.get("name")
 
-    if not name:
-        return {"error": "Category name is required"},400
+    if not isinstance(name, str) or not name.strip():
+        return {"error": "Category name is required"}, 400
+
+    name = name.strip()
 
     existing_category = Category.query.filter_by(name=name).first()
 
     if existing_category:
-        return {"error":"Category Name is already existed"},409
+        return {"error": "Category name already exists"}, 409
 
-    category = Category(
-    name=name
-    )
+    try:
+        category = Category(name=name)
+        db.session.add(category)
+        db.session.commit()
 
-    db.session.add(category)
-    db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return {"error": "Category creation failed"}, 500
 
-    return {
-    "message": "Category created successfully"
-    }, 201
+    return {"message": "Category created successfully"}, 201
 
 
 @category_bp.route("/categories", methods=["GET"])
 def get_categories():
+    categories = Category.query.order_by(Category.id.asc()).all()
 
-    categories = Category.query.all()
-
-    result = []
-
-    for category in categories:
-        result.append({
-                "id" : category.id,
-                "name" : category.name,
-                "created_at" : category.created_at
-        })
-
-    return jsonify(result),200
-
-@category_bp.route("/categories/<int:id>", methods=["GET"])
-def get_categories_id(id):
-
-    categories_at_id = Category.query.filter_by(id=id).first()
-
-    if not categories_at_id:
-        return {"error": "Category not found"}, 404
-    
     result = [
-        {    "id" : categories_at_id.id,
-            "name" : categories_at_id.name,
-            "created_at" : categories_at_id.created_at
+        {
+            "id": category.id,
+            "name": category.name,
+            "created_at": (
+                category.created_at.isoformat()
+                if category.created_at else None
+            )
         }
+        for category in categories
     ]
 
-    return jsonify(result),200
+    return jsonify(result), 200
+
+
+@category_bp.route("/categories/<int:id>", methods=["GET"])
+def get_category_by_id(id):
+    category = db.session.get(Category, id)
+
+    if not category:
+        return {"error": "Category not found"}, 404
+
+    result = {
+        "id": category.id,
+        "name": category.name,
+        "created_at": (
+            category.created_at.isoformat()
+            if category.created_at else None
+        )
+    }
+
+    return jsonify(result), 200
+
 
 @category_bp.route("/categories/<int:id>", methods=["PUT"])
-@jwt_required()
-def update_categories(id):
-
+@admin_required()
+def update_category(id):
     data = request.get_json(silent=True)
 
-    if not data:
-        return {"error": "Request body is required"}, 400
+    if not isinstance(data, dict):
+        return {"error": "Valid JSON request body is required"}, 400
 
     name = data.get("name")
 
-    if not name:
-        return {"error": "Name is required to update a category"}, 400
+    if not isinstance(name, str) or not name.strip():
+        return {"error": "Category name is required"}, 400
 
-    categories_at_id = Category.query.filter_by(id=id).first()
+    name = name.strip()
 
-    if not categories_at_id:
-        return {"error" : "No record found matching with id"},404
+    category = db.session.get(Category, id)
+
+    if not category:
+        return {"error": "Category not found"}, 404
 
     existing_category = Category.query.filter(
-    Category.name == name,
-    Category.id != id
+        Category.name == name,
+        Category.id != id
     ).first()
 
     if existing_category:
-        return {"error" : "Category is already existed with the same name "},409
+        return {"error": "Category name already exists"}, 409
 
-    categories_at_id.name = name
+    try:
+        category.name = name
+        db.session.commit()
 
-    db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return {"error": "Category update failed"}, 500
 
-    return {
-        "message": "Category updated successfully"
-    }, 200
+    return {"message": "Category updated successfully"}, 200
 
-@category_bp.route("/categories/<int:id>",methods=["DELETE"])
-@jwt_required()
+
+@category_bp.route("/categories/<int:id>", methods=["DELETE"])
+@admin_required()
 def delete_category(id):
-
-    category = Category.query.filter_by(id=id).first()
+    category = db.session.get(Category, id)
 
     if not category:
-        return {"error" : "Category not found "},404
+        return {"error": "Category not found"}, 404
 
     product = Product.query.filter_by(category_id=id).first()
 
     if product:
-        return {"error": "Product is linked with this category id"},409
+        return {
+            "error": "Cannot delete category because products are linked to it"
+        }, 409
 
-    db.session.delete(category)
-    db.session.commit()
+    try:
+        db.session.delete(category)
+        db.session.commit()
+
+    except Exception:
+        db.session.rollback()
+        return {"error": "Category deletion failed"}, 500
 
     return {"message": "Category deleted successfully"}, 200
