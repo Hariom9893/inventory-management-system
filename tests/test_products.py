@@ -857,3 +857,88 @@ def test_cannot_delete_category_with_products():
     )
 
     assert delete_response.status_code == 409
+
+
+def test_concurrent_stock_out_does_not_oversell():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    import uuid
+
+    app = create_app()
+    app.config["TESTING"] = True
+
+    # Admin login
+    client = app.test_client()
+    login_response = client.post(
+        "/login",
+        json={
+            "email": "admin@gmail.com",
+            "password": "admin123"
+        }
+    )
+    assert login_response.status_code == 200
+
+    token = login_response.get_json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Create a product and add 5 units
+    create_response = client.post(
+        "/products",
+        headers=headers,
+        json={
+            "name": "Concurrent Stock Test",
+            "sku": f"CONCURRENT-{uuid.uuid4().hex[:12]}",
+            "price": 100,
+            "low_stock_threshold": 1,
+            "category_id": None
+        }
+    )
+    assert create_response.status_code == 201
+
+    product_id = create_response.get_json()["product"]["id"]
+
+    stock_in_response = client.post(
+        f"/products/{product_id}/stock-in",
+        headers=headers,
+        json={"quantity": 5}
+    )
+    assert stock_in_response.status_code == 200
+
+    # Release both requests at approximately the same time
+    barrier = Barrier(2)
+
+    def stock_out():
+        with app.test_client() as test_client:
+            barrier.wait(timeout=5)
+            return test_client.post(
+                f"/products/{product_id}/stock-out",
+                headers=headers,
+                json={"quantity": 4}
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(stock_out),
+            executor.submit(stock_out)
+        ]
+        responses = [future.result(timeout=15) for future in futures]
+
+    # Exactly one request should succeed
+    statuses = sorted(response.status_code for response in responses)
+    assert statuses == [200, 400]
+
+    # Final stock must not be negative
+    product_response = client.get(f"/products/{product_id}")
+    assert product_response.status_code == 200
+    assert product_response.get_json()["current_stock"] == 1
+
+    # Only one stock-out transaction should be recorded
+    history_response = client.get(
+        f"/inventory/transactions?product_id={product_id}&type=OUT",
+        headers=headers
+    )
+    assert history_response.status_code == 200
+
+    history = history_response.get_json()
+    assert len(history) == 1
+    assert history[0]["quantity"] == 4
